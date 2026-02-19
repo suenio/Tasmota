@@ -5,7 +5,7 @@
 
 # Templates
 
-Find below the available templates as of December 2025. More template information can be found in the [Tasmota Device Templates Repository](http://blakadder.github.io/templates)
+Find below the available templates as of February 2026. More template information can be found in the [Tasmota Device Templates Repository](http://blakadder.github.io/templates)
 
 ## Adapter Board
 ```
