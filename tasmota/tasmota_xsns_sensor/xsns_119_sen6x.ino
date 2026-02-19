@@ -1,5 +1,5 @@
 /*
-  xsns_119_sen6x.ino - SEN6X environmental sensor node support for Tasmota
+  xsns_119_sen6x.ino - Sensirion SEN6X environmental sensor node support for Tasmota
 
   SPDX-FileCopyrightText: 2026 Theo Arends
 
@@ -62,27 +62,27 @@ struct SEN6XDATA_s {
 /********************************************************************************************/
 
 float Sen6xUInt16(uint16_t value) {
-    return (value == SEN6X_UINT_INVALID) ? NAN : value;
+ return (value == SEN6X_UINT_INVALID) ? NAN : value;
 }
 
 float Sen6xUInt16Div10(uint16_t value) {
-    return (value == SEN6X_UINT_INVALID) ? NAN : value / 10.0f;
+ return (value == SEN6X_UINT_INVALID) ? NAN : value / 10.0f;
 }
 
 float Sen6xInt16Div10(int16_t value) {
-    return (value == SEN6X_INT_INVALID) ? NAN : value / 10.0f;
+  return (value == SEN6X_INT_INVALID) ? NAN : value / 10.0f;
 }
 
 float Sen6xTemperature(int16_t temperatureRaw) {
-    float temperature = 0.0;
-    temperature = temperatureRaw / 200.0;
-    return temperature;
+  float temperature = 0.0;
+  temperature = temperatureRaw / 200.0;
+  return temperature;
 }
 
 float Sen6xHumidity(int16_t humidityRaw) {
-    float humidity = 0.0;
-    humidity = humidityRaw / 100.0;
-    return humidity;
+  float humidity = 0.0;
+  humidity = humidityRaw / 100.0;
+  return humidity;
 }
 
 /********************************************************************************************/
@@ -123,6 +123,7 @@ bool CmndSen6xError(int error) {
 /********************************************************************************************/
 
 void Sen6xInit(void) {
+  PowerOnDelay(100);  // Sensor startup time (Time after power-on until I2C communication can be started)
   for (uint32_t bus = 0; bus < 2; bus++) {
     if (!I2cSetDevice(SEN6X_I2C_ADDR_6B, bus)) { 
 //      Sen6xError("Scan", bus +1);
@@ -155,12 +156,10 @@ void Sen6xInit(void) {
     SEN6XDATA->major = major;
     SEN6XDATA->minor = minor;
     SEN6XDATA->state = SEN6X_STATE_START_MEASUREMENT;
-    strlcpy(SEN6XDATA->name, (char*)product_name, sizeof(SEN6XDATA->name));
-    char stemp[8];
-    uint32_t model = GetCommandCode(stemp, sizeof(stemp), SEN6XDATA->name, mSenNames);
-    SEN6XDATA->model = model +62;
+    uint32_t model = GetCommandCode(SEN6XDATA->name, sizeof(SEN6XDATA->name), (char*)product_name, mSenNames);
     uint8_t features[] = { 0, 2, 0, 1, 3, 0, 6, 7 };  // x x x x x hcho co2 voc
     SEN6XDATA->features = features[model];
+    SEN6XDATA->model = model +62;
 
     I2cSetActiveFound(SEN6X_I2C_ADDR_6B, SEN6XDATA->name, bus);
 
@@ -448,61 +447,48 @@ void Sen6xShow(bool json) {
   float ambientTemperature = Sen6xTemperature(SEN6XDATA->temperature);
   float vocIndex = Sen6xInt16Div10(SEN6XDATA->vocIndex);
   float noxIndex = Sen6xInt16Div10(SEN6XDATA->noxIndex);
+  float temperature = ConvertTemp(ambientTemperature);
+  float humidity = ConvertHumidity(ambientHumidity);
+  float abs_humidity = CalcTempHumToAbsHum(ambientTemperature, ambientHumidity);
 
-  float temperature = 0;
-  float humidity = 0;
-  float abs_humidity = 0;
-  bool ahum_available = (!isnan(ambientTemperature) && !isnan(ambientHumidity) && (ambientHumidity > 0));
-  if (ahum_available) {
-    temperature = ConvertTemp(ambientTemperature);
-    humidity = ConvertHumidity(ambientHumidity);
-    abs_humidity = CalcTempHumToAbsHum(ambientTemperature, ambientHumidity);
-  }
+#ifdef USE_LIGHT
+  LightSetSignal(CO2_LOW, CO2_HIGH, co2);  // SetOption18 - Pair light signal with CO2 sensor
+#endif  // USE_LIGHT
 
   if (json) {
     ResponseAppend_P(PSTR(",\"%s\":{\"PM1\":%1_f,\"PM2.5\":%1_f,\"PM4\":%1_f,\"PM10\":%1_f"),
       SEN6XDATA->name,
       &massConcentrationPm1p0, &massConcentrationPm2p5, &massConcentrationPm4p0, &massConcentrationPm10p0);
-    if (!isnan(co2)) {
+    if (SEN6XDATA->features & SEN6X_CO2) {
       ResponseAppend_P(PSTR(",\"" D_JSON_CO2 "\":%0_f"), &co2);
     }
-    if (!isnan(hcho)) {
+    if (SEN6XDATA->features & SEN6X_HCHO) {
       ResponseAppend_P(PSTR(",\"" D_JSON_HCHO "\":%0_f"), &hcho);
     }
-    if (!isnan(noxIndex)) {
-      ResponseAppend_P(PSTR(",\"NOx\":%0_f"), &noxIndex);
+    if (SEN6XDATA->features & SEN6X_VOCNOX) {
+      ResponseAppend_P(PSTR(",\"NOx\":%0_f,\"VOC\":%0_f"), &noxIndex, &vocIndex);
     }
-    if (!isnan(vocIndex)) {
-      ResponseAppend_P(PSTR(",\"VOC\":%0_f"), &vocIndex);
-    }
-    if (ahum_available) {
-      ResponseAppend_P(PSTR(","));
-      ResponseAppendTHD(temperature, humidity);
-      ResponseAppend_P(PSTR(",\"" D_JSON_AHUM "\":%4_f"), &abs_humidity);
-    }
-    ResponseJsonEnd();
+    ResponseAppend_P(PSTR(","));
+    ResponseAppendTHD(temperature, humidity);
+    ResponseAppend_P(PSTR(",\"" D_JSON_AHUM "\":%4_f}"), &abs_humidity);
 #ifdef USE_WEBSERVER
   } else {
     WSContentSend_PD(HTTP_SNS_F_ENVIRONMENTAL_CONCENTRATION, SEN6XDATA->name, "1", &massConcentrationPm1p0);
     WSContentSend_PD(HTTP_SNS_F_ENVIRONMENTAL_CONCENTRATION, SEN6XDATA->name, "2.5", &massConcentrationPm2p5);
     WSContentSend_PD(HTTP_SNS_F_ENVIRONMENTAL_CONCENTRATION, SEN6XDATA->name, "4", &massConcentrationPm4p0);
     WSContentSend_PD(HTTP_SNS_F_ENVIRONMENTAL_CONCENTRATION, SEN6XDATA->name, "10", &massConcentrationPm10p0);
-    if (!isnan(co2)) {
+    if (SEN6XDATA->features & SEN6X_CO2) {
       WSContentSend_PD(HTTP_SNS_F_CO2, SEN6XDATA->name, &co2);
     }
-    if (!isnan(hcho)) {
+    if (SEN6XDATA->features & SEN6X_HCHO) {
       WSContentSend_PD(HTTP_SNS_F_HCHO, SEN6XDATA->name, &hcho);
     }
-    if (!isnan(noxIndex)) {
+    if (SEN6XDATA->features & SEN6X_VOCNOX) {
       WSContentSend_PD(HTTP_SNS_F_NOX, SEN6XDATA->name, &noxIndex);
-    }
-    if (!isnan(vocIndex)) {
       WSContentSend_PD(HTTP_SNS_F_VOC, SEN6XDATA->name, &vocIndex);
     }
-    if (ahum_available) {
-      WSContentSend_THD(SEN6XDATA->name, temperature, humidity);
-      WSContentSend_PD(HTTP_SNS_F_ABS_HUM, SEN6XDATA->name, 4, &abs_humidity);
-    }
+    WSContentSend_THD(SEN6XDATA->name, temperature, humidity);
+    WSContentSend_PD(HTTP_SNS_F_ABS_HUM, SEN6XDATA->name, 4, &abs_humidity);
 #endif
   }
 }
